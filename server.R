@@ -5,6 +5,7 @@ library(dygraphs)
 library(xts)
 library(shiny)
 library(plotly)
+library(igraph)
 
 ################ Themes #####################
 dge.theme <-  theme_bw() + 

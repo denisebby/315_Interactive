@@ -6,6 +6,7 @@ library(visNetwork)
 library(dygraphs)
 library(xts)
 library(shiny)
+library(igraph)
 
 ui <- dashboardPage(skin = "purple",
   dashboardHeader(title = "The Visualizers: College Football", 
