@@ -6,22 +6,11 @@ library(xts)
 library(shiny)
 library(plotly)
 library(igraph)
+library(matrixStats)
+library(dendextend)
 
 ################ Themes #####################
-dge.theme <-  theme_bw() + 
-  theme(plot.title = element_text(size = rel(2), face = "bold",
-                                  color = "midnightblue"),
-        panel.border = element_rect(linetype = "dashed",
-                                    color = "midnightblue"),
-        axis.title.y = element_text(color = "midnightblue", 
-                                    face = "bold"),
-        axis.title.x = element_text(color = "midnightblue", 
-                                    face = "bold"),
-        legend.title = element_text(color = "midnightblue", 
-                                    face = "bold"),
-        legend.text = element_text(color = "midnightblue"),
-        plot.caption = element_text(color = "midnightblue"),
-        plot.subtitle = element_text(color = "midnightblue")) 
+
 
 katheri2_315_theme <-  theme(plot.background = element_rect(fill = "lightblue"), 
                              axis.text = element_text(size = 12, color = "darkslategrey"),
@@ -103,8 +92,8 @@ sources <- opp2.grouped %>%
   distinct(Team) %>%
   rename(label = Team)
 sources <- sources %>% arrange(label)
-nodes <- sources %>% rowid_to_column("id") %>% mutate(font.color = "purple", font.size = 20, 
-                                                      margin = 50, borderWidth = 1)
+nodes <- sources %>% rowid_to_column("id") %>% mutate(font.color = "purple", font.size = 15, 
+                                                       borderWidth = 1)
 
 edges <- opp2.grouped %>% 
   left_join(nodes, by = c("Team" = "label")) %>% 
@@ -118,7 +107,48 @@ edges <- select(edges, from, to, PointDiff)
 edges$Team <- NULL
 colnames(edges)[3] <- "value"
 edges$title <- paste("Avg. Point Diff is ",paste(edges$value), sep = "")
-################################
+################################  WIN/LOSS CODE ##################
+
+opp.WL <- opp %>% separate(Result, c("WinLoss"), sep = " ")
+opp.WL <- mutate(opp.WL, WinLoss = fct_recode(as.factor(WinLoss), "Win" = "W", "Loss" = "L"))
+opp.WL <- opp.WL %>% filter(WinLoss %in% c("Loss","Win"))
+opp.WL$WinLoss <- droplevels(opp.WL$WinLoss)
+
+################################ MOSAIC PLOT ########################
+
+opp_cate <- dplyr::select(opp.WL, TVyn, WinLoss, `New Coach`, Tailgating, Month)
+
+################################ DENDOGRAM ###########################
+
+opp_cont <- dplyr::select(opp, 
+                          Attendance, 
+                          `Current Wins`, 
+                          `Current Losses`, 
+                          `Stadium Capacity`, 
+                          `Fill Rate`, 
+                          PRCP, 
+                          SNOW, 
+                          SNWD, 
+                          TMAX, 
+                          TMIN, 
+                          Year, 
+                          Month, 
+                          Day, 
+                          PointDiff)
+
+opp_cont <- rename(opp_cont, 
+                   "Game Attendance" = Attendance, 
+                   "Current Wins" = `Current Wins`, 
+                   "Current Losses" = `Current Losses`, 
+                   "Stadium Capacity" = `Stadium Capacity`, 
+                   "Stadium Fill Rate" = `Fill Rate`, 
+                   "Precipitation" = PRCP, 
+                   "Snowfall" = SNOW, 
+                   "Snow Depth" = SNWD, 
+                   "Max Temperature" = TMAX, 
+                   "Min Temperature" = TMIN, 
+                   "Point Difference" = PointDiff)
+
 
 
 function(input, output) {
@@ -132,11 +162,11 @@ function(input, output) {
                                               border-color: purple;
                                               color: purple;"),
                     submain = list(
-                      text = paste("If a team points to another team, then at least for its home games, on average, it beats that other team.",
+                      text = paste("Note: If a team points to another team, then at least for its home games, on average, it beats that other team.",
                             "The edge weight represents the magnitude of the average point difference. The data is based on college football games from 2000-2018.",
                             "To explore, choose a team from the dropdown, drag and zoom in/out, and hover over edges to see actual differences."),
                       style = "font-size: 15px;"),
-                    width = "500%", height = "1000px", background = "lightblue") %>%
+                    width = "100%", height = "750px", background = "lightblue") %>%
       visIgraphLayout(layout = "layout_in_circle") %>%
       visNodes(size = 20) %>%
       visEdges(arrows = list(to = list(enabled = T, scaleFactor = 2)),
@@ -167,8 +197,12 @@ function(input, output) {
   
   output$testing <- renderDygraph({
     dygraph(total_ts, main = "Attendance Per Game Over Time") %>% 
-      dyRangeSelector(dateWindow = c("2000-08-26", "2018-12-01"))
+      dyRangeSelector(dateWindow = c("2000-08-26", "2018-12-01")) %>% 
+      dySeries("data_ts", label = "Attendance") %>% 
+      dySeries("mv_ts", label = "Moving Average")
   })
+  
+  
   
   output$plotly_plot <- renderPlotly({
     
@@ -182,11 +216,11 @@ function(input, output) {
     
     title = paste("Total Wins of Top 10 Teams in", top_10$year)
     
-    p <- ggplot(top_10) + geom_bar(aes(x = reorder(team, -max_wins), y = max_wins, fill = attendance), stat = "identity") + 
+    p <- ggplot(top_10) + geom_bar(aes(x = reorder(team, -max_wins), y = max_wins, fill = attendance,  text = paste(team, ", wins:", max_wins)),   stat = "identity") + 
       labs(title = title, y = "Number of Wins", x = "Teams", fill = "Attendance") + katheri2_315_theme + 
       theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  scale_fill_gradient(low = "#79a6d2", high = "#00334d")
     
-    p_plotly <- ggplotly(p,height = 500)
+    p_plotly <- ggplotly(p,height = 500, tooltip = "text")
     
     return(p_plotly)
     
@@ -203,13 +237,13 @@ function(input, output) {
     )
     
     if(input$color == "TV Coverage Status"){
-      fillrate_plot <-  plot_ly(opp, x = ~PointDiff, y = ~`Fill Rate`, color = ~`TVyn`, type = "scatter") %>%
-        layout(xaxis = x, yaxis = y)
+      fillrate_plot <-  plot_ly(opp, x = ~PointDiff, y = ~`Fill Rate`, opacity = 0.68, color = ~`TVyn`, type = "scatter") %>%
+        layout(xaxis = x, yaxis = y) 
     } else if (input$color == "Top 25 Tailgating Status"){
-      fillrate_plot <-  plot_ly(opp, x = ~PointDiff, y = ~`Fill Rate`, color = ~`Tailgating`, type = "scatter") %>%
+      fillrate_plot <-  plot_ly(opp, x = ~PointDiff, y = ~`Fill Rate`, opacity = 0.68, color = ~`Tailgating`, type = "scatter") %>%
         layout(xaxis = x, yaxis = y)
     } else {
-      fillrate_plot <-  plot_ly(opp, x = ~PointDiff, y = ~`Fill Rate`, color = ~`New Coach`, type = "scatter") %>%
+      fillrate_plot <-  plot_ly(opp, x = ~PointDiff, y = ~`Fill Rate`, opacity = 0.68, color = ~`New Coach`, type = "scatter") %>%
         layout(xaxis = x, yaxis = y)
     }
   
@@ -217,90 +251,162 @@ function(input, output) {
     
   })
   
-  
-  output$Fill2 <- renderPlotly({
-    print(input$color)
-    if(input$color == "TVyn"){
-      fillrate_plot <-  plot_ly(opp, x = ~PointDiff, y = ~`Fill Rate`, type = "scatter") %>%
-        layout(title = "Point Difference versus Fill Rate")
-    }
-    else if(input$color == "Tailgating"){
-      fillrate_plot <-  plot_ly(opp, x = ~PointDiff, y = ~`Fill Rate`, type = "scatter") %>%
-        layout(title = "Point Difference versus Fill Rate")
-    }
-    else {
-      fillrate_plot <-  plot_ly(opp, x = ~PointDiff, y = ~`Fill Rate`, type = "scatter") %>%
-        layout(title = "Point Difference versus Fill Rate")
-    }
-    return(fillrate_plot)
-  })
   
   output$cat.plot <- renderPlot({
     
-    if(input$var == "TVyn"){
-      cat_plot <- ggplot(opp, aes(x = WinLoss, fill = TVyn)) + geom_bar() + labs()
+    if(input$var == "TV Coverage Status"){
+      cat_plot <- ggplot(opp.WL, aes(x = WinLoss, fill = TVyn)) + geom_bar() +
+        labs(x = "Outcome for Home Team", y = "Frequency") + scale_fill_discrete(name = "TV Status") + katheri2_315_theme 
     }
-    else if(input$var == "Tailgating"){
-      cat_plot <- ggplot(opp, aes(x = WinLoss, fill = Tailgating)) + geom_bar() + labs()
+    else if(input$var == "Top 25 Tailgating Status"){
+      cat_plot <- ggplot(opp.WL, aes(x = WinLoss, fill = Tailgating)) + geom_bar() +
+        labs(x = "Outcome for Home Team", y = "Frequency") + scale_fill_discrete(name = "Top 25\nTailgating\nSpot") + katheri2_315_theme
     }
     else {
-      cat_plot <- ggplot(opp, aes(x = WinLoss, fill = `New Coach`)) + geom_bar() + labs()
+      cat_plot <- ggplot(opp.WL, aes(x = WinLoss, fill = `New Coach`)) + geom_bar() + 
+        labs(x = "Outcome for Home Team", y = "Frequency") + scale_fill_discrete(name ="Led By New Coach") + katheri2_315_theme
     }
     return(cat_plot)
   })
   
   
-  
-  output$main_plot <- renderPlot({
+  output$con.plot <- renderPlot({
     
-    eruption.plot <- ggplot(faithful, aes(x = eruptions)) + 
-      geom_histogram(aes(y = ..density..), 
-                     bins = as.numeric(input$n_breaks)) +
-      labs(x = "Duration (minutes)", title = "Geyser Eruption Duration") +
-      dge.theme
-    
-    if (input$individual_obs){
-      eruption.plot <- eruption.plot + geom_rug()
-    }
-    
-    if (input$density) {
-      eruption.plot <- eruption.plot + geom_density(color = "blue", 
-                                                    adjust = input$bw_adjust)
-    }
-    
-    return(eruption.plot)
-    
-  })
-  
-  output$graph1 <- renderPlot({
-    
-    plot.g1 <- ggplot(faithful, aes(x = waiting, y = eruptions)) +
-      geom_point(size = input$sizeG1) + 
-      labs(x = "Waiting time", y = "Eruptions", 
-           title = "Eruptions Vs. Waiting Time") + dge.theme 
-    
-    if (input$smoothBool){
-      plot.g1 <- plot.g1 + geom_smooth()
-    }
-    
-    return(plot.g1)
-    
-  })
-  
-  output$graph2 <- renderPlot({
-    plot.g2 <- ggplot(faithful, aes(x = waiting, y = eruptions)) + 
-      labs(x = "Waiting time", y = "Eruptions", 
-           title = "Joint Distribution of Eruptions and Waiting Time") + 
-      dge.theme 
-    
-    if (input$filledBool){
-      plot.g2 <- plot.g2 + geom_density2d_filled(adjust = input$bwG2)
+    if (input$density){
+      
+      if (input$varc == "Attendance"){
+        con_plot <- ggplot(opp, aes(x = Attendance)) + geom_histogram(aes(y = ..density..),
+                                                                      fill = "lightblue", col = "black") + 
+          geom_density(color = "purple", size = 2) + katheri2_315_theme + labs()
+      }
+      else if(input$varc == "Stadium Capacity"){
+        con_plot <- ggplot(opp, aes(x = `Stadium Capacity`)) + geom_histogram(aes(y = ..density..),
+                                                                              fill = "lightblue", col = "black") +
+          geom_density(color = "purple", size = 2) + katheri2_315_theme + labs()
+      }
+      else {
+        con_plot <- ggplot(opp, aes(x = `Fill Rate`)) + geom_histogram(aes(y = ..density..),
+                                                                       fill = "lightblue", col = "black") + 
+          geom_density(color = "purple", size = 2) + katheri2_315_theme + labs()
+      }
     } else {
-      plot.g2 <- plot.g2 + geom_density2d(adjust = input$bwG2)
+      
+      if (input$varc == "Attendance"){
+        con_plot <- ggplot(opp, aes(x = Attendance)) + 
+          geom_histogram(fill = "lightblue", col = "black") + 
+          katheri2_315_theme + labs( y = "Frequency")
+      }
+      else if(input$varc == "Stadium Capacity"){
+        con_plot <- ggplot(opp, aes(x = `Stadium Capacity`)) + 
+          geom_histogram(fill = "lightblue", col = "black") + 
+          katheri2_315_theme + labs(y = "Frequency")
+      }
+      else {
+        con_plot <- ggplot(opp, aes(x = `Fill Rate`)) + 
+          geom_histogram(fill = "lightblue", col = "black") + 
+          katheri2_315_theme + labs(y = "Frequency")
+      }
+      
     }
     
-    return(plot.g2)
+  
+    return(con_plot)
   })
+  
+  
+  
+  
+  output$mosaic <- renderPlot({
+    source("https://raw.githubusercontent.com/mateyneykov/315_code_data/master/code/geom_mosaic.R")
+    
+    New.Coach.plot <- ggplot(opp_cate, aes(y = as.factor(WinLoss), x = as.factor(`New Coach`))) + 
+      geom_mosaic() +
+      mosaic_legend() +
+      labs(y = "Game Result",
+           x = "New Coach",
+           title = "Coach and Game Results") + 
+      katheri2_315_theme
+    
+    Tailgating.plot <- ggplot(opp_cate, aes(y = as.factor(WinLoss), x = Tailgating)) + 
+      geom_mosaic() +
+      mosaic_legend() +
+      labs(y = "Game Result",
+           x = "Top 25 Tailgating Status",
+           title = "Top 25 Tailgating Status and Game Results") + 
+      katheri2_315_theme
+    
+    Month.plot <- ggplot(opp_cate, aes(y = as.factor(WinLoss), x = as.factor(Month))) + 
+      geom_mosaic() +
+      mosaic_legend() +
+      labs(y = "Game Result",
+           x = "Game Month",
+           title = "Game Month and Results") + 
+      katheri2_315_theme
+    
+    TV.plot <- ggplot(opp_cate, aes(y = as.factor(WinLoss), x = as.factor(TVyn))) + 
+      geom_mosaic() +
+      mosaic_legend() +
+      labs(y = "Game Result",
+           x = "TV Coverage Status",
+           title = "TV Coverage and Results") + 
+      katheri2_315_theme
+    
+    if(input$mosaic_var == "New Coach"){
+      final <- New.Coach.plot
+    }
+    else if(input$mosaic_var == "Top 25 Tailgating"){
+      final <- Tailgating.plot
+    }
+    else if(input$mosaic_var == "TV Coverage"){
+      final <- TV.plot
+    }
+    else {
+      final <- Month.plot
+    }
+    
+    return(final)
+  })
+  
+  #DEBUG
+  output$dendrogram_plot2 <- renderPlot({
+    return(ggplot(opp, aes(x = `Fill Rate`)) + 
+             geom_histogram(fill = "lightblue", col = "black"))
+  })
+  
+  
+ 
+  output$dendrogram_plot <- renderPlot({
+    
+    cormat <- cor(opp_cont, method = input$cor_method)
+    
+    cormat <- 1 - abs(cormat)
+    dist_cormat <- as.dist(cormat)
+    cormat_linkage <- hclust(dist_cormat, method = input$cluster_method)
+    
+    dend <- as.dendrogram(cormat_linkage)
+    
+    dendro <- dend %>%
+      set("labels_cex", 0.8) %>%
+      set("branches_k_color", k = input$cluster_num, c("mistyrose3", "tan2", "steelblue3", 
+                                                       "indianred2", "yellow3", "lightslateblue", 
+                                                       "midnightblue", "slategray3")) %>%
+      ggplot(horiz = T, theme = NULL) +
+      labs(title = "Correlation Matrix Dendrogram for All Continuous Variables", 
+           x = "", 
+           y = "") +
+      #  geom_text(aes(label = cormat_data$labels), family = "Times") +
+      theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+            axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+      katheri2_315_theme
+    
+    return(dendro)
+    
+    
+  })
+  
+  
+  
+  
   
   
 }
